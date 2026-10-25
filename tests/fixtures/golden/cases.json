@@ -1,0 +1,44 @@
+{
+  "amazing-grace": {
+    "title": "Amazing Grace",
+    "author": "John Newton",
+    "year": 1779,
+    "ccli": 22025,
+    "seq": "V1,V2,V3,V4"
+  },
+  "holy-holy-holy": {
+    "title": "Holy Holy Holy",
+    "author": "Reginald Heber",
+    "year": 1826,
+    "ccli": 0,
+    "seq": "V1,V2,V3,V4,V1"
+  },
+  "come-thou-fount": {
+    "title": "Come Thou Fount of Every Blessing",
+    "author": "Robert Robinson",
+    "year": 1758,
+    "ccli": 0,
+    "seq": "V1,V2,V3,V4,V5,V6"
+  },
+  "it-is-well": {
+    "title": "It Is Well With My Soul",
+    "author": "Horatio Spafford",
+    "year": 1873,
+    "ccli": 25376,
+    "seq": "V1,C,V2,C,V3,C,V4,C"
+  },
+  "keys": {
+    "title": "Keys",
+    "author": "",
+    "year": 0,
+    "ccli": 0,
+    "seq": "V1,Vamp,Refrain,Ending,Interlude2,PreChorus2"
+  },
+  "edge-characters": {
+    "title": "Edge Ángel Señor",
+    "author": "Test",
+    "year": 2026,
+    "ccli": 0,
+    "seq": "V1,Spontaneous,V1"
+  }
+}

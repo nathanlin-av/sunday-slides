@@ -1,0 +1,13 @@
+{
+  "name": "sunday-slides",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Makes ProPresenter song slides from Planning Center lyrics. Runs in your own Google Apps Script project.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

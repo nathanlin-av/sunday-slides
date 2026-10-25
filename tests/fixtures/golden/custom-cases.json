@@ -1,0 +1,5 @@
+{
+  "custom-georgia": { "template": "georgia.pro", "from": "amazing-grace", "title": "Amazing Grace", "author": "John Newton", "year": 1779, "ccli": 22025, "seq": "V1,V2" },
+  "custom-capitals-typed": { "template": "capitals-typed.pro", "from": "amazing-grace", "title": "Amazing Grace", "author": "John Newton", "year": 1779, "ccli": 22025, "seq": "V1,V2" },
+  "custom-cmg-style": { "template": "cmg-style.pro", "from": "amazing-grace", "title": "Amazing Grace", "author": "John Newton", "year": 1779, "ccli": 22025, "seq": "V1,V2" }
+}
