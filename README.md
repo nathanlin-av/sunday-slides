@@ -211,6 +211,19 @@ it, and the script will use CMG Sans widths for the line breaks. Nothing here de
 - It talks only to Planning Center and Google. No other server, no tracking, no accounts.
 - It never changes anything in Planning Center unless MODE is `live`.
 
+## Staying safe
+
+- Get it only from this page: `github.com/nathanlin-av/sunday-slides`. If someone sends you a copy, a zip, or a
+  "faster" version from anywhere else, do not use it.
+- There is nothing to install. It has no outside packages or libraries; the copy and paste setup uses only Google's
+  own script editor.
+- You can check where it is allowed to connect. Open `appsscript.json`: the `urlFetchWhitelist` lists only the two
+  Planning Center addresses. Google enforces that list, so the script cannot send anything anywhere else. If you
+  ever see another address there, stop and do not run it.
+- If you use clasp, install Google's official package (`@google/clasp`) and nothing with a similar name.
+- Found a security problem? Please report it privately with the **Report a vulnerability** button under this
+  project's **Security** tab instead of opening a public issue.
+
 ## If something looks wrong
 
 | What you see | What to do |
