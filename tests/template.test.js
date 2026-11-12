@@ -323,7 +323,7 @@ test("the average-width rule never makes a line narrower than Arial would, so un
   assert.ok(lines > 60);
 });
 
-test("default look: every line fits the box, keeps the lyric's own case, and the drafts match the reviewed reference", () => {
+test("default look: every line fits the box, keeps the lyric's own case, and the drafts match the checked reference", () => {
   const layout = g.layout_default();
   for (const n of ["amazing-grace", "holy-holy-holy", "come-thou-fount", "it-is-well"]) {
     const lyrics = text("hymns", n + ".txt"), out = g.draftSlides(lyrics);
@@ -332,7 +332,7 @@ test("default look: every line fits the box, keeps the lyric's own case, and the
       assert.ok(line !== line.toUpperCase() || line.length < 4, "should not be capitals: " + line);
     }
     const asText = out.groups.map((x) => "[" + x.label + "]\n" + x.slides.map((s) => s.join(" / ")).join("\n")).join("\n") + "\n";
-    assert.strictEqual(asText, text("golden", n + ".slides.txt"), n + ": drafts changed; review, then run node tools/make_golden_drafts.js and rebuild the golden files");
+    assert.strictEqual(asText, text("golden", n + ".slides.txt"), n + ": drafts changed; check them, then run node tools/make_golden_drafts.js and rebuild the golden files");
   }
 });
 
@@ -342,4 +342,21 @@ test("capitals are used only when the template shows capitals", () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(g.draftSlides("Verse 1\nHoly holy holy\n", plain).groups[0].slides)), [["Holy holy holy"]]);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(g.draftSlides("Verse 1\nHoly holy holy\n", caps).groups[0].slides)), [["HOLY HOLY HOLY"]]);
   assert.ok(g.layout_width(caps, "holy") > g.layout_width(plain, "holy"));
+});
+
+// Placeholder capitals and extra text layers.
+test("placeholder words in capitals are seen in any alphabet", () => {
+  assert.strictEqual(g.tpl_isAllCaps("LYRICS GO HERE"), true);
+  assert.strictEqual(g.tpl_isAllCaps("\u041f\u0415\u0421\u041d\u042f"), true);      // Cyrillic capitals
+  assert.strictEqual(g.tpl_isAllCaps("\u041f\u0435\u0441\u043d\u044f"), false);
+  assert.strictEqual(g.tpl_isAllCaps("\u8056\u8056\u8056"), false);                   // no capitals in this script
+  assert.strictEqual(g.tpl_isAllCaps("A"), false);
+});
+
+test("a slide with a second layer that also has words is refused", () => {
+  const two = swapCue(GEORGIA, (cue) => {
+    const f = g.pb_fields(cue), action = f.find((x) => x.n === 10);
+    return g.pb_encode(f.concat([action]).sort((a, b) => a.n - b.n));
+  });
+  assert.throws(() => g.tpl_fromPro(two), /more than one/);
 });

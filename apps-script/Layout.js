@@ -47,6 +47,24 @@ function layout_make(spec) {
 /** The layout of the built-in default look (PP_ASSETS.layout, written by tools/build_default_template.js). */
 function layout_default() { return layout_make(PP_ASSETS.layout); }
 
+// Chinese, Japanese and Korean characters are a full em wide in every font (the "full width" forms too).
+var LAYOUT_WIDE = /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/;
+// Marks that sit on the letter before them, and characters that join or select others: no width of their own.
+var LAYOUT_NO_WIDTH = /[\p{Mn}\p{Me}\p{Cf}]/u;
+
+/**
+ * Width in em of a character the font table does not know: 1 for a wide character, 0 for a mark, else the average.
+ * A character past the basic range (emoji, the rarer Chinese characters) comes as two code units: the first is
+ * counted as 1 em, the second as nothing.
+ */
+function layout_unknownEm(ch, average) {
+  if (ch >= "\udc00" && ch <= "\udfff") return 0;
+  if (ch === "\udb40") return 0;   // U+E0000 to U+E0FFF: tags and variation selectors, no width
+  if (ch >= "\ud800" && ch <= "\udbff") return 1;
+  if (LAYOUT_NO_WIDTH.test(ch)) return 0;
+  return LAYOUT_WIDE.test(ch) ? 1 : average;
+}
+
 function layout_em(layout, s) {
   var i, total = 0, ch, w;
   if (layout.model === "cmg") {
@@ -54,19 +72,22 @@ function layout_em(layout, s) {
     for (i = 0; i < s.length; i++) {
       ch = s.charAt(i);
       w = adv[ch === "’" ? "'" : ch];
-      total += (w === undefined) ? adv["?"] : w;
+      total += (w === undefined) ? layout_unknownEm(ch, adv["?"] / CMG_WIDTHS.unitsPerEm) * CMG_WIDTHS.unitsPerEm : w;
     }
     return total / CMG_WIDTHS.unitsPerEm;
   }
   if (layout.model === "arial") {
     var table = layout.bold ? ARIAL_WIDTHS.bold : ARIAL_WIDTHS.regular, unknown = layout.caps ? LAYOUT_AVG_EM_CAPS : LAYOUT_AVG_EM;
     for (i = 0; i < s.length; i++) {
-      w = table[s.charAt(i)];
-      total += (w === undefined) ? unknown * ARIAL_WIDTHS.unitsPerEm : w;
+      ch = s.charAt(i);
+      w = table[ch];
+      total += (w === undefined) ? layout_unknownEm(ch, unknown) * ARIAL_WIDTHS.unitsPerEm : w;
     }
     return total / ARIAL_WIDTHS.unitsPerEm;
   }
-  return s.length * (layout.caps ? LAYOUT_AVG_EM_CAPS : LAYOUT_AVG_EM);
+  var average = layout.caps ? LAYOUT_AVG_EM_CAPS : LAYOUT_AVG_EM;
+  for (i = 0; i < s.length; i++) { total += layout_unknownEm(s.charAt(i), average); }
+  return total;
 }
 
 /** Estimated width of the text on the slide, in slide units. */

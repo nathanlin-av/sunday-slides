@@ -410,3 +410,75 @@ test("creating the control sheet remembers the Sunday Slides folder it was put i
   assert.strictEqual(moved, made);
   assert.strictEqual(w.props.TEMPLATE_FOLDER_ID, "folder-new");
 });
+
+test("a misspelled or repeated setting name is reported, never ignored", () => {
+  const base = { SERVICE_TYPE_ID: "1", TIME_ZONE: "America/Chicago" };
+  assert.match(norm({ ...base, PAUSE: "yes" }).errors.join(" "), /PAUSE is not a setting/);
+  assert.match(norm({ ...base, SETTING: "Value" }).errors.join(" "), /SETTING is not a setting/);
+  const rows = g.set_parseRows([["PAUSED", "yes"], ["paused", "no"], ["MODE", "live"]]);
+  assert.match(plain(g.set_normalize({ ...base, ...plain(rows) }, CTX)).errors.join(" "), /PAUSED is on the Settings tab more than once/);
+});
+
+test("a ticked or TRUE cell means yes, and a whole number must be written as one", () => {
+  const base = { SERVICE_TYPE_ID: "1", TIME_ZONE: "America/Chicago" };
+  assert.strictEqual(plain(g.set_normalize({ ...base, ...plain(g.set_parseRows([["PAUSED", true], ["APPROVAL_REQUIRED", false]])) }, CTX)).settings.paused, true);
+  assert.strictEqual(norm({ ...base, PAUSED: "TRUE" }).settings.paused, true);
+  assert.strictEqual(norm({ ...base, APPROVAL_REQUIRED: "false" }).settings.approvalRequired, false);
+  assert.match(norm({ ...base, PLAN_COUNT: "0x3" }).errors.join(" "), /PLAN_COUNT/);
+  assert.match(norm({ ...base, PLAN_COUNT: "3.0" }).errors.join(" "), /PLAN_COUNT/);
+  assert.strictEqual(norm({ ...base, PLAN_COUNT: "4" }).settings.planCount, 4);
+});
+
+test("a column moved or renamed on a tab stops the run with a plain message", () => {
+  const w = fakeWorld({});
+  w.world.setupSundaySlides();
+  const sh = w.sheets.Settings;
+  w.world.ctl_checkHead(sh, ["Setting", "Value", "What it does"], "Settings");           // as made: fine
+  sh.getRange(1, 1, 1, 3).setValues([["Value", "Setting", "What it does"]]);
+  assert.throws(() => w.world.ctl_checkHead(sh, ["Setting", "Value", "What it does"], "Settings"), /columns of the Settings tab were moved or renamed/);
+  assert.throws(() => w.world.ctl_readSettings({ getSheetByName: () => sh, getSpreadsheetTimeZone: () => "UTC" }), /moved or renamed/);
+});
+
+test("old SongSelect import stamps are cleared; today's stamp and the attach records are kept", () => {
+  const w = fakeWorld({});
+  const today = JSON.stringify(w.world.job_dateKey(new Date(), "America/Chicago"));
+  const store = { "ss:imp:a1": JSON.stringify("2020-01-01"), "ss:imp:a2": today, "ss:att:a1": "{}", LAST_RUN: "x" };
+  const props = { getProperties: () => Object.assign({}, store), deleteProperty: (k) => { delete store[k]; } };
+  w.world.ss_pruneStamps(props, { timeZone: "America/Chicago", freezeDay: 0, freezeMinutes: 480 });
+  assert.deepStrictEqual(Object.keys(store).sort(), ["LAST_RUN", "ss:att:a1", "ss:imp:a2"]);
+  w.world.ss_pruneStamps({ getProperties: () => { throw new Error("no"); } }, null);   // never stops a run
+});
+
+test("a row with a note in the first column and no value is left alone", () => {
+  const base = { SERVICE_TYPE_ID: "1", TIME_ZONE: "America/Chicago" };
+  const raw = plain(g.set_parseRows([["Note: ask before changing these", ""], ["----", null], ["PAUSE", "yes"]]));
+  const errors = plain(g.set_normalize({ ...base, ...raw }, CTX)).errors;
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0], /PAUSE is not a setting/);
+});
+
+test("the This Sunday and Log tabs are checked for moved columns before they are written", () => {
+  const w = fakeWorld({});
+  w.world.setupSundaySlides();
+  const control = w.world.ctl_control({ getSheetByName: (n) => w.sheets[n] || null, insertSheet: (n) => (w.sheets[n] = null) });
+  control.log("fine");
+  control.setThisSunday([{ plan: "p", title: "t", status: "ready", note: "n" }]);
+  w.sheets["This Sunday"].getRange(1, 1, 1, 4).setValues([["Song", "Plan", "Status", "What to do"]]);
+  assert.throws(() => control.setThisSunday([]), /This Sunday tab were moved or renamed/);
+  w.sheets.Log.getRange(1, 1, 1, 2).setValues([["Summary", "At"]]);
+  assert.throws(() => control.log("x"), /Log tab were moved or renamed/);
+});
+
+test("two empty divider or note rows with the same text are left alone", () => {
+  const base = { SERVICE_TYPE_ID: "1", TIME_ZONE: "America/Chicago" };
+  const raw = plain(g.set_parseRows([["----", ""], ["----", ""], ["Notes", null], ["Notes", null]]));
+  assert.strictEqual(plain(g.set_normalize({ ...base, ...raw }, CTX)).errors.length, 0);
+});
+
+test("a misspelled setting with a value is reported even when a blank copy of the row follows it", () => {
+  const base = { SERVICE_TYPE_ID: "1", TIME_ZONE: "America/Chicago" };
+  for (const rows of [[["PAUSE", "yes"], ["PAUSE", ""]], [["PAUSE", ""], ["PAUSE", "yes"]], [["PAUSE", "yes"], ["pause", null], ["PAUSE", ""]]]) {
+    const errors = plain(g.set_normalize({ ...base, ...plain(g.set_parseRows(rows)) }, CTX)).errors.join(" ");
+    assert.match(errors, /PAUSE is not a setting/);
+  }
+});

@@ -42,6 +42,8 @@ function pco_getAll(c, path) {
     included = included.concat(r.included || []);
     url = r.links && r.links.next ? r.links.next : null;
   }
+  // A longer list than this is not expected; stop loudly, never work from part of a list.
+  if (url) throw new Error("Planning Center sent more than 20 pages for " + path);
   return { data: out, included: included };
 }
 
@@ -106,6 +108,13 @@ function pco_attachPro(c, songId, arrangementId, filename, bytes) {
   var existing = pco_attachments(c, songId, arrangementId).filter(function (a) { return /\.pro\d?$/i.test(a.attributes.filename || ""); });
   if (existing.length) throw new Error("arrangement " + arrangementId + " already has " + existing[0].attributes.filename + "; not adding another");
   var ident = pco_upload(c, filename, bytes);
+  // The upload takes a moment. Look again: if a person attached slides meanwhile, theirs stay and ours are not added.
+  var appeared = pco_attachments(c, songId, arrangementId).filter(function (a) { return /\.pro\d?$/i.test(a.attributes.filename || ""); });
+  if (appeared.length) {
+    var e = new Error(appeared[0].attributes.filename + " appeared on arrangement " + arrangementId + " while the slides were being uploaded; nothing was attached");
+    e.nothingPosted = true;
+    throw e;
+  }
   return pco_post(c, "/services/v2/songs/" + songId + "/arrangements/" + arrangementId + "/attachments",
     { type: "Attachment", attributes: { file_upload_identifier: ident, filename: filename } }).data;
 }

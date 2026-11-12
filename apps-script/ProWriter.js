@@ -25,6 +25,8 @@ function pw_rtfEscape(text) {
     var ch = text.charAt(i), code = text.charCodeAt(i);
     if (ch === "\\" || ch === "{" || ch === "}") out += "\\" + ch;
     else if (ch === "\n") out += "\\\n";
+    else if (ch === "\t") out += " ";
+    else if (code < 32 || (code >= 127 && code <= 159)) continue;   // control characters have no place on a slide
     else if (code > 127) out += "\\uc0\\u" + (code < 32768 ? code : code - 65536) + " ";
     else out += ch;
   }
@@ -56,8 +58,47 @@ function pw_restoreCase(caps, lyrics, start) {
   re.lastIndex = start;
   var m = re.exec(lyrics);
   if (!m) { re.lastIndex = 0; m = re.exec(lyrics); }
-  if (!m) throw new Error("draft line not found in the lyrics: " + JSON.stringify(caps));
-  return { text: m[0], end: m.index + m[0].length };
+  if (m) return { text: m[0], end: m.index + m[0].length };
+  var found = pw_findUpper(caps, lyrics, start) || pw_findUpper(caps, lyrics, 0);
+  if (!found) throw new Error("draft line not found in the lyrics: " + JSON.stringify(caps));
+  return found;
+}
+
+// The words of the lyrics with their places, split once per song (the last lyrics seen are kept).
+var PW_WORDS = { lyrics: null, tokens: null };
+
+function pw_lyricWords(lyrics) {
+  if (PW_WORDS.lyrics !== lyrics) {
+    var tokens = [], re = /\S+/g, t;
+    while ((t = re.exec(lyrics))) tokens.push({ text: t[0], at: t.index });
+    PW_WORDS = { lyrics: lyrics, tokens: tokens };
+  }
+  return PW_WORDS.tokens;
+}
+
+function pw_upperWord(w) { return w.replace(/\u2019/g, "'").toUpperCase(); }
+
+/**
+ * The same search for capitals that do not map back letter for letter (Turkish dotless i, ligatures like "ffi"):
+ * a run of lyric words whose capitals are the draft's words. The last word may carry extra end punctuation.
+ */
+function pw_findUpper(caps, lyrics, start) {
+  var want = caps.split(/\s+/).filter(function (w) { return w.length; }).map(pw_upperWord);
+  var tokens = pw_lyricWords(lyrics), i = 0;
+  while (i < tokens.length && tokens[i].at < start) i++;
+  for (; want.length && i + want.length <= tokens.length; i++) {
+    var ok = true, last = i + want.length - 1, endAt = 0;
+    for (var k = 0; ok && k < want.length; k++) {
+      var tok = tokens[i + k];
+      if (i + k < last) { ok = pw_upperWord(tok.text) === want[k]; continue; }
+      ok = false;
+      for (var n = tok.text.length; n > 0 && !ok; n--) {   // the longest start of the word that is the draft's word
+        if (pw_upperWord(tok.text.substring(0, n)) === want[k]) { ok = true; endAt = tok.at + n; }
+      }
+    }
+    if (ok) return { text: lyrics.substring(tokens[i].at, endAt), end: endAt };
+  }
+  return null;
 }
 
 function pw_capFirst(line) { return line.charAt(0).toUpperCase() + line.substring(1); }
@@ -65,7 +106,7 @@ function pw_capFirst(line) { return line.charAt(0).toUpperCase() + line.substrin
 /** Planning Center style labels to ProPresenter group names ("Chorus 1" -> "Chorus", "Pre-Chorus" -> "PreChorus"). */
 function pw_groupName(label) {
   label = label.trim().replace(/^Pre[- ]?Chorus/i, "PreChorus");
-  return label.replace(/^(Chorus|Tag|Bridge|PreChorus|Intro|Ending|Outro|Interlude|Vamp|Refrain|Turnaround)\s+1$/, "$1");
+  return label.replace(/^(Chorus|Tag|Bridge|PreChorus|Intro|Ending|Outro|Interlude|Vamp|Refrain|Turnaround)\s+1$/i, "$1");
 }
 
 function pw_uuidMsg(id, A) { return pb_message([pb_stringField((A || PP_ASSETS).f.uuid.string, id)]); }
@@ -123,14 +164,28 @@ function pw_setRange(attr, units, A) {
   return pb_encode(all);
 }
 
+/**
+ * The group a sequence item names. Capitals and spaces do not count ("VERSE 1", "verse1" and "Verse 1" are one
+ * group, "FinalChorus" is "Final Chorus"); short forms ("V1", "C", "PC2") and "Chorus 1" for "Chorus" are understood.
+ */
 function pw_sequenceName(item, byName, A) {
-  var m = /^([A-Za-z-]+?)(\d*)$/.exec(item.trim());
+  var names = {}, flat = function (t) { return String(t).replace(/\s+/g, "").toLowerCase(); };
+  // An exact name always wins; of two groups that differ only in capitals or spaces, the first one typed.
+  Object.keys(byName).forEach(function (n) { if (!Object.prototype.hasOwnProperty.call(names, flat(n))) names[flat(n)] = n; });
+  var find = function (t) {
+    if (Object.prototype.hasOwnProperty.call(byName, t)) return t;
+    var k = flat(t);
+    return Object.prototype.hasOwnProperty.call(names, k) ? names[k] : null;
+  };
+  var hit = find(item);
+  if (hit) return hit;
+  var m = /^([A-Za-z-]+?)(\d*[a-c]?)$/.exec(item.trim());   // "Verse1", "Chorus", "Verse1a"
   if (!m) throw new Error("sequence item " + JSON.stringify(item) + " is not a section label");
-  var word = (A || PP_ASSETS).short[m[1]] || m[1];
+  var word = (A || PP_ASSETS).short[m[1]] || (A || PP_ASSETS).short[m[1].toUpperCase()] || m[1];   // "V1" and "v1"
   var name = m[2] ? word + " " + m[2] : word;
-  if (!(name in byName)) name = m[2] === "1" ? pw_groupName(name) : pw_groupName(name + " 1");
-  if (!(name in byName)) throw new Error("sequence item " + JSON.stringify(item) + " has no group (have " + Object.keys(byName).sort().join(", ") + ")");
-  return name;
+  hit = find(name) || find(m[2] === "1" ? pw_groupName(name) : pw_groupName(name + " 1"));
+  if (!hit) throw new Error("sequence item " + JSON.stringify(item) + " has no group (have " + Object.keys(byName).sort().join(", ") + ")");
+  return hit;
 }
 
 /**

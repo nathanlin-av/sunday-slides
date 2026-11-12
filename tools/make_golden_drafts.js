@@ -3,7 +3,7 @@
  * Rewrites tests/fixtures/golden/{amazing-grace,holy-holy-holy,come-thou-fount,it-is-well,selftest}.slides.txt from the
  * drafter's current output for the built-in default look. Those files are the input of the golden .pro files; the
  * golden .pro bytes themselves come from a separate reference writer, never from this script.
- * Run it only after reviewing a change to the drafter, then rebuild the golden .pro files.
+ * Run it only after checking a change to the drafter, then rebuild the golden .pro files.
  */
 "use strict";
 const fs = require("fs");

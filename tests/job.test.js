@@ -25,7 +25,7 @@ function fakePco(plans) {
     let m;
     if (req.url.startsWith("https://upload.")) return { code: 200, text: JSON.stringify({ data: [{ id: "up-" + writes.length }] }) };
     if ((m = u.match(/^\/services\/v2\/service_types\/\d+\/plans\?filter=future/))) {
-      return { code: 200, text: JSON.stringify({ data: plans.map((p) => ({ id: p.id, attributes: { dates: p.dates } })) }) };
+      return { code: 200, text: JSON.stringify({ data: plans.map((p) => ({ id: p.id, attributes: { dates: p.dates, sort_date: p.sortDate } })) }) };
     }
     if ((m = u.match(/^\/services\/v2\/service_types\/\d+\/plans\/(\d+)\/items/))) {
       const p = plans.find((x) => x.id === m[1]);
@@ -609,4 +609,395 @@ test("a song whose title is not in Latin letters is attached with its UTF-8 file
   const pro = uploadedPro(pco);
   assert.deepStrictEqual(Array.from(g.pw_check(pro)), []);
   assert.ok(Buffer.from(pro).includes(Buffer.from(title, "utf8")), "the presentation name is UTF-8 too");
+});
+
+// Lyric cleaning, label case, long titles and run limits. Public-domain or made-up text only.
+test("a section label in brackets or parentheses is kept as a label", () => {
+  const clean = g.job_cleanLyrics("[Verse 1]\nAmazing grace how sweet the sound\n\n(Chorus)\nI once was lost\n[Organ only]\n(Repeat Chorus)\n");
+  assert.strictEqual(clean, "Verse 1\nAmazing grace how sweet the sound\n\nChorus\nI once was lost\n");
+  // a repeat count inside or after the brackets is not part of the label
+  for (const label of ["[Chorus x2]", "(Chorus) (x2)", "[Chorus] [2x]", "[Chorus]:", "Chorus (x2)", "[CHORUS X2]"]) {
+    const d = g.draftSlides(g.job_cleanLyrics(label + "\nI once was lost\n"));
+    assert.strictEqual(d.groups.map((x) => x.label).join("|"), "Chorus", label);
+  }
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nI once was lost\n[softly] (hold)\n"), "Verse 1\nI once was lost\n");
+});
+
+test("a lyric line that starts with the word repeat is kept; repeat instructions are dropped", () => {
+  const clean = g.job_cleanLyrics("Verse 1\nJoy to the world\nRepeat the sounding joy\nRepeat\nRepeat Chorus\nRepeat x2\nRpt\nRepeat last line twice\nRepeat the chorus 2 times\nRepeat final chorus\nRepeat to fade\nRepeat 4 bars\nRepeat instrumental\n");
+  assert.strictEqual(clean, "Verse 1\nJoy to the world\nRepeat the sounding joy\n");
+});
+
+test("labels typed in capitals or small letters still follow the Planning Center order", () => {
+  for (const [v, c] of [["VERSE 1", "CHORUS"], ["verse 1", "chorus"], ["Verse 1", "Chorus"]]) {
+    const d = g.draftSlides(v + "\nAmazing grace how sweet the sound\n\n" + c + "\nI once was lost but now am found");
+    assert.strictEqual(d.groups.map((x) => x.label).join("|"), "Verse 1|Chorus", v);
+    const r = g.job_sequence(["Verse 1", "Chorus 1", "Verse 1", "Chorus 1"], d.groups);
+    assert.strictEqual(r.sequence.join("|"), "Verse1|Chorus|Verse1|Chorus", v);
+    assert.strictEqual(r.skipped.length, 0, v);
+  }
+});
+
+test("a very long title still gives a file name Planning Center can take", () => {
+  const name = g.job_filename("Amazing Grace ".repeat(40), "Default");
+  assert.ok(name.length <= 124 && /\.pro$/.test(name) && !/ \.pro$/.test(name), name.length + " " + name.slice(-12));
+});
+
+test("the This Sunday tab shows the plan on the service day, not an earlier rehearsal plan", () => {
+  const sat = { id: "200", dates: "October 24, 2026", sortDate: "2026-10-24T22:00:00Z", songs: [{ ...GRACE_SONG, title: "Rehearsal song", arr: "a20", song: "s20" }] };
+  const sun = { id: "201", dates: "October 25, 2026", sortDate: "2026-10-25T14:30:00Z", songs: [GRACE_SONG] };
+  const e = env(fakePco([sat, sun]));
+  g.job_run(e);
+  assert.strictEqual(e._.thisSunday().map((r) => r.planId).join(","), "201");
+  const e2 = env(fakePco([PLAN([GRACE_SONG])]));   // no dates to go by: the next plan, as before
+  g.job_run(e2);
+  assert.strictEqual(e2._.thisSunday().map((r) => r.planId).join(","), "100");
+});
+
+test("lyrics imports stop when the run is short of time, and are left for the next run", () => {
+  const songs = [];
+  for (let i = 1; i <= 16; i++) songs.push({ title: "No words " + i, song: "s" + i, arr: "a" + i, lyrics: "" });
+  const pco = fakePco([PLAN(songs)]);
+  const e = env(pco, { mode: "live" });
+  let t = e.now.getTime();
+  e.clock = () => new Date(t);
+  pco.client.sleep = (ms) => { t += ms; };            // each wait for SongSelect really takes that long
+  const s = g.job_run(e);
+  const imports = pco.writes.filter((w) => /import_ccli/.test(w.url)).length;
+  assert.ok(imports >= 1 && imports < 16, "imports " + imports);
+  assert.match(s.report[15].note, /next run/);
+  assert.strictEqual(e._.state["imp:a16"], undefined);   // not marked as tried today
+});
+
+test("a list with more pages than expected is an error, never a silently short list", () => {
+  let n = 0;
+  const c = { http: () => ({ code: 200, text: JSON.stringify({ data: [{ id: ++n }], links: { next: "https://api.planningcenteronline.com/services/v2/x?offset=" + n } }) }), auth: "Basic x", sleep: () => {} };
+  assert.throws(() => g.pco_getAll(c, "/services/v2/x"), /more than 20 pages/);
+});
+
+test("an edit that changes nothing on the slides (an ad-lib in brackets) is not reported as changed lyrics", () => {
+  const song = { ...GRACE_SONG, lyrics: GRACE + "\n(softly)\n" };
+  const pco = fakePco([PLAN([song])]);
+  const e = env(pco, { mode: "live", approvalRequired: false });
+  assert.strictEqual(g.job_run(e).report[0].status, "attached");
+  song.lyrics = GRACE + "\n(loudly)\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "ready");
+  song.lyrics = GRACE + "\nOne more line\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "lyrics-changed");
+});
+
+test("two long titles that differ only after the cut get different file names", () => {
+  const a = g.job_filename("Amazing Grace ".repeat(40) + "One", "Default"), b = g.job_filename("Amazing Grace ".repeat(40) + "Two", "Default");
+  assert.notStrictEqual(a, b);
+  assert.ok(a.length <= 124 && b.length <= 124);
+  assert.strictEqual(g.job_filename("Amazing Grace", "Default"), "Amazing Grace.pro");
+});
+
+function buildsFine(lyrics) {
+  const clean = g.job_cleanLyrics(lyrics), tpl = g.tpl_default(), draft = g.draftSlides(clean, tpl.layout);
+  const seq = g.job_sequence([], draft.groups);
+  return { clean, draft, built: g.pw_build(draft.groups, clean, { title: "T", author: "", ccli: 0, year: 0 }, seq.sequence, null, tpl.assets) };
+}
+
+test("lines with punctuation inside closing quotes or brackets still build into a file", () => {
+  const r = buildsFine("Verse 1\nHe said, \u201cGo.\u201d\nHe said \u201cgo,\u201d and I went on my way rejoicing\nThen sing aloud (aloud!)\n\u2018Tis so sweet.\u2019\n");
+  assert.ok(r.built.slides >= 3);
+});
+
+test("copyright and license lines pasted with the lyrics never reach the slides", () => {
+  const clean = g.job_cleanLyrics("Verse 1\nAmazing grace how sweet the sound\nCCLI Song # 22025\n\u00a9 Public Domain\nCopyright 1779 Public Domain\n(c) 1779 Somebody\nFor use solely with the SongSelect\u00ae Terms of Use. All rights reserved. www.ccli.com\nCCLI License # 1234567\nWords and Music by John Newton\nAll rights reserved\n");
+  assert.strictEqual(clean, "Verse 1\nAmazing grace how sweet the sound\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAll rights to the throne are His\nWords of life\n"), "Verse 1\nAll rights to the throne are His\nWords of life\n");
+});
+
+test("a verse number on a line of its own is a verse label", () => {
+  const clean = g.job_cleanLyrics("1\nAmazing grace how sweet the sound\n\n2.\nTwas grace that taught my heart to fear\n\n3)\nThrough many dangers\n");
+  assert.strictEqual(clean, "Verse 1\nAmazing grace how sweet the sound\n\nVerse 2\nTwas grace that taught my heart to fear\n\nVerse 3\nThrough many dangers\n");
+});
+
+test("a huge pasted line is cleaned quickly and nothing in it is lost", () => {
+  const t0 = Date.now();
+  const clean = g.job_cleanLyrics("Verse 1\n" + "holy ".repeat(3000) + "\nword (" + "x".repeat(30000) + "\n");
+  assert.ok(Date.now() - t0 < 3000, "took " + (Date.now() - t0) + " ms");
+  assert.strictEqual(clean.split(/\s+/).filter((w) => w === "holy").length, 3000);
+  assert.ok(clean.split("\n").every((line) => line.length <= 1000));
+});
+
+test("a title with a broken character still makes a readable file", () => {
+  const bytes = g.pb_utf8("Grace \ud800 Song");
+  assert.strictEqual(Buffer.from(bytes).toString("utf8"), "Grace \ufffd Song");
+  assert.strictEqual(Buffer.from(g.pb_utf8("\ud83d\ude00 ok \udc00")).toString("utf8"), "\ud83d\ude00 ok \ufffd");
+});
+
+test("control characters never reach the slide text", () => {
+  assert.strictEqual(g.pw_rtfEscape("a\u0000b\u0007c\u000bd\ne\tf"), "abcd\\\ne f");
+});
+
+test("with no order from Planning Center, the order typed in the lyrics is used, repeats included", () => {
+  const lyrics = "Verse 1\nAmazing grace how sweet the sound\n\nRefrain\nI once was lost but now am found\n\nVerse 2\nTwas grace that taught my heart to fear\n\nRefrain\nI once was lost but now am found\n";
+  const d = g.draftSlides(g.job_cleanLyrics(lyrics));
+  assert.strictEqual(d.groups.length, 3);
+  assert.strictEqual(g.job_sequence([], d.groups, d.order).sequence.join("|"), "Verse1|Refrain|Verse2|Refrain");
+  assert.strictEqual(g.job_sequence(["Verse 2", "Refrain"], d.groups, d.order).sequence.join("|"), "Verse2|Refrain");
+});
+
+test("a repeat count after a bracketed label is not part of the label", () => {
+  for (const label of ["[Chorus] x2", "(Chorus) 2x", "[Chorus x 2]:", "[Chorus] (x2) x2"]) {
+    const d = g.draftSlides(g.job_cleanLyrics("Verse 1\nAmazing grace\n" + label + "\nI once was lost\n"));
+    assert.strictEqual(d.groups.map((x) => x.label).join("|"), "Verse 1|Chorus", label);
+  }
+});
+
+test("a change of punctuation or capitals only is not reported as changed lyrics", () => {
+  const song = { ...GRACE_SONG, lyrics: "Verse 1\nSing to the Lord a new song!\n" };
+  const pco = fakePco([PLAN([song])]);
+  const e = env(pco, { mode: "live", approvalRequired: false });
+  assert.strictEqual(g.job_run(e).report[0].status, "attached");
+  song.lyrics = "Verse 1\nSing to the Lord, a new song?\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "ready");
+  song.lyrics = "Verse 1\nSing to the Lord an old song\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "lyrics-changed");
+});
+
+test("file names stay short in bytes too, and never use a name Windows keeps for itself", () => {
+  const korean = g.job_filename("\uc8fc".repeat(120), "Default");
+  assert.ok(Buffer.byteLength(korean, "utf8") <= 204, Buffer.byteLength(korean, "utf8"));
+  assert.match(korean, /^\uc8fc+ [0-9a-f]{8}\.pro$/);
+  for (const t of ["CON", "nul", "Lpt1", "Com9"]) assert.notStrictEqual(g.job_filename(t, "").toLowerCase(), t.toLowerCase() + ".pro");
+  assert.strictEqual(g.job_filename("Consider", ""), "Consider.pro");
+});
+
+test("a run that is out of time leaves the remaining songs for the next run, and says so", () => {
+  const songs = [];
+  for (let i = 1; i <= 30; i++) songs.push({ title: "Song " + i, song: "s" + i, arr: "a" + i, lyrics: GRACE });
+  const pco = fakePco([PLAN(songs)]);
+  const e = env(pco);
+  let t = e.now.getTime();
+  e.clock = () => new Date(t);
+  const http = pco.client.http;
+  pco.client.http = (req) => { t += 20000; return http(req); };   // every request takes 20 seconds
+  const s = g.job_run(e);
+  assert.strictEqual(s.report.length, 30);
+  assert.strictEqual(s.report[0].status, "pending-approval");
+  assert.strictEqual(s.report[29].status, "not-reached");
+  assert.match(s.report[29].note, /next run/);
+  assert.ok(s.counts["not-reached"] > 0 && s.counts["pending-approval"] > 0);
+});
+
+test("a song too long to preview in full is not offered for approval", () => {
+  let lyrics = "";
+  for (let v = 1; v <= 60; v++) { lyrics += "Verse " + v + "\n"; for (let l = 0; l < 30; l++) lyrics += "Line " + v + " " + l + " of a very long medley of songs\n"; lyrics += "\n"; }
+  const pco = fakePco([PLAN([{ ...GRACE_SONG, lyrics }])]);
+  const e = env(pco, { mode: "live" });
+  const s = g.job_run(e);
+  assert.strictEqual(s.report[0].status, "too-long");
+  assert.strictEqual(e._.approvalRows.length, 0);
+  assert.strictEqual(pco.writes.length, 0);
+});
+
+test("only credit lines are dropped, never a lyric that starts with the same word", () => {
+  const keep = ["Music by the river", "Words of life", "Text me when you come", "Tune my heart to sing Thy grace", "Copyright of heaven", "All rights to the throne are His"];
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\n" + keep.join("\n") + "\n"), "Verse 1\n" + keep.join("\n") + "\n");
+  const drop = ["Words and Music by John Newton", "Words by John Newton", "Music by William Walker", "WORDS AND MUSIC BY JOHN NEWTON", "Words & Music by John Newton"];
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAmazing grace\n" + drop.join("\n") + "\n"), "Verse 1\nAmazing grace\n");
+});
+
+test("a number is a verse label only at the start of a stanza", () => {
+  assert.strictEqual(g.job_cleanLyrics("1\nAmazing grace\n\n2\nTwas grace\n"), "Verse 1\nAmazing grace\n\nVerse 2\nTwas grace\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nCount with me\n7\n12\nAmen\n"), "Verse 1\nCount with me\n7\n12\nAmen\n");
+});
+
+test("a soft line break from a word processor is a line break, not a missing space", () => {
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAmazing grace\u000bhow sweet the sound\u000cThat saved\n"), "Verse 1\nAmazing grace\nhow sweet the sound\nThat saved\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\n\u0e2a\u0e23\u0e23\u200b\u0e40\u0e2a\u0e23\u0e34\u0e0d\n"), "Verse 1\n\u0e2a\u0e23\u0e23\u200b\u0e40\u0e2a\u0e23\u0e34\u0e0d\n");   // Thai keeps its word breaks
+});
+
+test("a very long line is reported on the song, in the real job too", () => {
+  const pco = fakePco([PLAN([{ ...GRACE_SONG, lyrics: "Verse 1\n" + "holy ".repeat(300) + "\n", sequence: [] }])]);
+  const e = env(pco);
+  g.job_run(e);
+  assert.match(e._.approvalRows[0].notes, /very long line was cut into pieces/);
+});
+
+test("when runs keep running out of time, each run starts where the last one stopped, so every song is reached", () => {
+  const songs = [];
+  for (let i = 1; i <= 30; i++) songs.push({ title: "Song " + i, song: "s" + i, arr: "a" + i, lyrics: GRACE });
+  const pco = fakePco([PLAN(songs)]);
+  const e = env(pco);
+  let t = e.now.getTime();
+  e.clock = () => new Date(t);
+  const http = pco.client.http;
+  pco.client.http = (req) => { t += 20000; return http(req); };
+  const reached = new Set();
+  let runs = 0;
+  for (; runs < 6 && reached.size < 30; runs++) {
+    e.now = new Date(t);
+    g.job_run(e).report.forEach((r) => { if (r.status !== "not-reached") reached.add(r.title); });
+  }
+  assert.strictEqual(reached.size, 30, "reached " + reached.size + " songs in " + runs + " runs");
+  pco.client.http = http;                       // a fast run reaches everything and forgets where it was
+  assert.strictEqual(g.job_run(e).counts["not-reached"], undefined);
+  assert.strictEqual(e._.state.cursor, null);
+});
+
+test("repeat counts with punctuation after them are still repeat counts", () => {
+  assert.strictEqual(g.job_cleanLyrics("Chorus x2:\nI once was lost x2,\n2x.\n[Chorus] x2:\nBut now am found (x3).\n"), "Chorus\nI once was lost\nChorus\nBut now am found.\n");
+});
+
+test("lines that only look like credits are kept; publisher lines are dropped", () => {
+  const keep = ["Words: You are holy", "Music: let heaven sing", "Text: Your love remains"];
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\n" + keep.join("\n") + "\n"), "Verse 1\n" + keep.join("\n") + "\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAmazing grace\nPublished by Example Music\nAdministered by Example Songs\nWords by John Newton\n"), "Verse 1\nAmazing grace\n");
+});
+
+test("a sung countdown is not a set of verse numbers", () => {
+  assert.strictEqual(g.job_cleanLyrics("Bridge\nCount it down\n\n3\n2.\n1)\nShout\n"), "Bridge\nCount it down\n\n3\n2.\n1)\nShout\n");
+  assert.strictEqual(g.job_cleanLyrics("1\nAmazing grace\n\n2.\nTwas grace\n"), "Verse 1\nAmazing grace\n\nVerse 2\nTwas grace\n");
+});
+
+test("a changed symbol or emoji is a change to the lyrics; unseen marks at the ends of a line are dropped", () => {
+  assert.notStrictEqual(g.job_shownKey("Verse 1\nJesus \u2665\n"), g.job_shownKey("Verse 1\nJesus \u271d\n"));
+  assert.notStrictEqual(g.job_shownKey("Verse 1\nJesus \ud83d\ude00\n"), g.job_shownKey("Verse 1\nJesus \ud83d\ude4f\n"));
+  assert.strictEqual(g.job_shownKey("Verse 1\nSing, sing!\n"), g.job_shownKey("verse 1\nsing SING\n"));
+  const word = "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd";
+  assert.strictEqual(g.job_cleanLyrics("\u200f[Verse 1]\n\u200f" + word + "\u200e\n\u200f\n"), "Verse 1\n" + word + "\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nA\u0080B\u009fC\n"), "Verse 1\nABC\n");
+  assert.strictEqual(g.pw_rtfEscape("a\u0085b\u009fc"), "abc");
+});
+
+test("unseen marks: dropped at the ends of a line, kept inside it, and never in the way of reading a line", () => {
+  const thai = "\u0e2a\u0e23\u0e23\u200b\u0e40\u0e2a\u0e23\u0e34\u0e0d";
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\n" + thai + " (x2)\n\u200f" + thai + "\u200e (soft)\n"), "Verse 1\n" + thai + "\n" + thai + "\n");
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAmazing grace\n\u061cWords by John Newton\u061c\n\u061cRepeat Chorus\u061c\n"), "Verse 1\nAmazing grace\n");
+  assert.strictEqual(g.job_cleanLyrics("\u061c1\u061c\nAmazing grace\n"), "Verse 1\nAmazing grace\n");
+  const d = g.draftSlides("Verse 1\n\u200eHoly holy.\u200e\nLord God Almighty\n");
+  assert.strictEqual(d.groups[0].slides.length, 2);                     // the full stop still ends the sentence
+  assert.strictEqual(JSON.stringify(d.groups[0].slides[0]), JSON.stringify(["Holy holy"]));
+});
+
+test("lyrics-changed ignores an apostrophe or hyphen that comes or goes; repeat counts end in ? or an ellipsis too", () => {
+  assert.strictEqual(g.job_shownKey("Verse 1\nI can't, God\u2019s ever-lasting\n"), g.job_shownKey("Verse 1\nI cant Gods everlasting\n"));
+  assert.notStrictEqual(g.job_shownKey("Verse 1\nI cant\n"), g.job_shownKey("Verse 1\nI can\n"));
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nSing x2?\nSing x2\u2026\n[Chorus x2]\nSing\n"), "Verse 1\nSing\nSing\nChorus\nSing\n");
+});
+
+test("a song used in two plans is listed under each plan's own title", () => {
+  const shared = { ...GRACE_SONG };
+  const pco = fakePco([PLAN([{ ...shared, title: "Shared rehearsal" }], "300"), PLAN([{ ...shared, title: "Shared Sunday" }], "301")]);
+  const s = g.job_run(env(pco));
+  assert.strictEqual(s.report.map((r) => r.title).join("|"), "Shared rehearsal|Shared Sunday");
+});
+
+test("labels like Verse 1a and Verse 1b build into a file and follow the order", () => {
+  const r = buildsFine("VERSE 1A\nAmazing grace how sweet the sound\n\nVerse 1b\nI once was lost but now am found\n\nChorus\nGlory be to the Father\n");
+  assert.ok(r.built.slides >= 3);
+  const seq = g.job_sequence(["Verse 1a", "Chorus", "Verse 1b", "Chorus"], r.draft.groups, r.draft.order);
+  assert.strictEqual(seq.sequence.join("|"), "Verse1a|Chorus|Verse1b|Chorus");
+  assert.strictEqual(seq.skipped.length, 0);
+});
+
+test("a forced dry run neither uses nor moves the place where the last slow run stopped", () => {
+  const songs = [];
+  for (let i = 1; i <= 4; i++) songs.push({ title: "Song " + i, song: "s" + i, arr: "a" + i, lyrics: GRACE });
+  const pco = fakePco([PLAN(songs)]);
+  const e = env(pco);
+  e.state.set("cursor", "100:a3");
+  e.forced = true;
+  g.job_run(e);
+  assert.strictEqual(e._.state.cursor, "100:a3");
+  e.forced = false;
+  g.job_run(e);
+  assert.strictEqual(e._.state.cursor, null);
+});
+
+test("a file someone attaches while the slides are being uploaded is never joined by a second one", () => {
+  const pco = fakePco([PLAN([GRACE_SONG])]);
+  const http = pco.client.http;
+  pco.client.http = (req) => {
+    if (req.url.startsWith("https://upload.")) pco.attachments.a1.push({ attributes: { filename: "Hand made.pro" } });
+    return http(req);
+  };
+  const e = env(pco, { mode: "live", approvalRequired: false });
+  const first = g.job_run(e).report[0];
+  assert.strictEqual(first.status, "error");
+  assert.match(first.note, /appeared/);
+  assert.strictEqual(pco.attachments.a1.length, 1, "only the hand-made file is there");
+  pco.client.http = http;
+  assert.strictEqual(g.job_run(e).report[0].status, "ready");
+  assert.strictEqual(pco.attachments.a1.length, 1);
+});
+
+test("the Planning Center order is matched whatever its capitals, and labels of two words build", () => {
+  const lyrics = "Verse 1\nAmazing grace how sweet the sound\n\nChorus\nGlory be to the Father\n\nFinal Chorus\nGlory be to the Father and to the Son\n";
+  const r = buildsFine(lyrics);
+  assert.ok(r.built.slides >= 3);
+  for (const order of [["VERSE 1", "CHORUS", "FINAL CHORUS"], ["verse 1", "chorus 1", "final chorus"], ["Verse 1", "Chorus", "Final Chorus"]]) {
+    const seq = g.job_sequence(order, r.draft.groups, r.draft.order);
+    assert.strictEqual(seq.sequence.join("|"), "Verse1|Chorus|FinalChorus", order.join(","));
+    assert.strictEqual(seq.skipped.length, 0, order.join(","));
+  }
+  const built = g.pw_build(r.draft.groups, r.clean, { title: "T", author: "", ccli: 0, year: 0 }, ["verse1", "CHORUS", "FinalChorus", "chorus"], null, g.tpl_default().assets);
+  assert.ok(built.slides >= 3);
+});
+
+test("a credit line with both words and music is dropped whatever the capitals of the name", () => {
+  assert.strictEqual(g.job_cleanLyrics("Verse 1\nAmazing grace\nWords and Music by john newton\nwords & music by JOHN NEWTON\nMusic by the river\n"), "Verse 1\nAmazing grace\nMusic by the river\n");
+});
+
+test("a record made before fingerprints were kept gets one, so a later change of punctuation is not a change", () => {
+  const song = { ...GRACE_SONG, lyrics: "Verse 1\nSing to the Lord a new song\n", attachments: ["Amazing Grace.pro"] };
+  const pco = fakePco([PLAN([song])]);
+  const e = env(pco, { mode: "live", approvalRequired: false });
+  e.state.set("att:a1", { hash: g.job_hash(song.lyrics), filename: "Amazing Grace.pro", at: "2026-10-01T00:00:00.000Z" });
+  assert.strictEqual(g.job_run(e).report[0].status, "ready");
+  assert.strictEqual(e._.state["att:a1"].shown, g.job_shownKey(song.lyrics));
+  song.lyrics = "Verse 1\nSing to the Lord, a new song! (softly)\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "ready");
+  song.lyrics = "Verse 1\nSing to the Lord an old song\n";
+  assert.strictEqual(g.job_run(e).report[0].status, "lyrics-changed");
+  assert.strictEqual(pco.writes.length, 0);
+});
+
+test("a very long word is cut between whole characters", () => {
+  const word = "a".repeat(399) + "\ud83d\ude00" + "b".repeat(700);
+  const clean = g.job_cleanLyrics("Verse 1\n" + word + "\n");
+  assert.ok(clean.includes("\ud83d\ude00"));
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(clean), "no half character");
+});
+
+test("a removed file whose record was cleared by hand goes back to waiting for approval", () => {
+  const pco = fakePco([PLAN([GRACE_SONG])]);
+  const e = env(pco, { mode: "live", approvalRequired: true });
+  g.job_run(e);
+  const key = e._.approvalRows[0].key;
+  e._.approvals[key] = "APPROVED";
+  assert.strictEqual(g.job_run(e).report[0].status, "attached");
+  assert.strictEqual(e._.approvals[key], "ATTACHED");
+  pco.attachments.a1.length = 0;                 // someone removes the file
+  e.state.set("att:a1", null);                    // and clears the record, as the instructions say
+  assert.strictEqual(g.job_run(e).report[0].status, "pending-approval");
+  assert.strictEqual(e._.approvals[key], "PENDING");
+  e._.approvals[key] = "APPROVED";
+  assert.strictEqual(g.job_run(e).report[0].status, "attached");
+});
+
+test("a line stuffed with unseen characters is cleaned quickly", () => {
+  const t0 = Date.now();
+  const row = "a" + "\u200b".repeat(120000) + "a";
+  const clean = g.job_cleanLyrics("Verse 1\n" + row + "\n" + "\u200b".repeat(120000) + "\nAmazing grace\n");
+  g.job_shownKey("Verse 1\n" + row + "\n");
+  g.job_longLines("Verse 1\n" + row + "\n");
+  assert.ok(Date.now() - t0 < 3000, "took " + (Date.now() - t0) + " ms");
+  assert.ok(/Amazing grace/.test(clean));
+});
+
+test("the place a slow run stopped is always short enough to save", () => {
+  const songs = [];
+  for (let i = 1; i <= 30; i++) songs.push({ title: "T".repeat(20000) + i, song: null, arr: null, lyrics: "" });
+  const pco = fakePco([PLAN(songs)]);
+  const e = env(pco);
+  let t = e.now.getTime();
+  e.clock = () => new Date((t += 60000));
+  g.job_run(e);
+  assert.ok(String(e._.state.cursor || "").length < 300, String(e._.state.cursor || "").length);
 });

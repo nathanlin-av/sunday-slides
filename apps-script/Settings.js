@@ -49,16 +49,45 @@ function set_timeZoneProblem(tz) {
  * timeZone: the spreadsheet's time zone. Sheets hands a time like 08:45 back as a Date, so FREEZE_TIME is turned back into HH:mm.
  */
 function set_parseRows(rows, timeZone) {
-  var raw = {};
+  var raw = {}, repeated = [];
   (rows || []).forEach(function (r) {
     var key = String(r[0] == null ? "" : r[0]).trim().toUpperCase();
-    if (key) raw[key] = set_cellText(key, r[1], timeZone);
+    if (!key) return;
+    var value = set_cellText(key, r[1], timeZone);
+    if (Object.prototype.hasOwnProperty.call(raw, key)) {
+      if (repeated.indexOf(key) < 0) repeated.push(key);
+      if (raw[key] !== "") return;   // a name on two rows is reported either way; a blank copy never hides a value
+    }
+    raw[key] = value;
   });
+  if (repeated.length) raw[SET_REPEATED] = repeated.join(", ");
   return raw;
+}
+
+var SET_REPEATED = "#REPEATED";   // set_parseRows notes here the names it met on more than one row
+
+/**
+ * Problems with the names in the first column: one that is not a setting (a typo), one that is there twice.
+ * A row with no value (a note someone typed in the first column, a divider) is left alone.
+ */
+function set_nameProblems(raw) {
+  var known = {}, problems = [];
+  known[SET_REPEATED] = true;
+  SET_DEFS.forEach(function (d) { known[d.key] = true; });
+  Object.keys(raw).forEach(function (key) {
+    if (!Object.prototype.hasOwnProperty.call(known, key) && raw[key] !== "") problems.push(key + " is not a setting name, so that row does nothing. Check the spelling (the names are " +
+      SET_DEFS.map(function (d) { return d.key; }).join(", ") + "), or clear the row.");
+  });
+  String(raw[SET_REPEATED] || "").split(", ").forEach(function (key) {
+    if (key && (Object.prototype.hasOwnProperty.call(known, key) || raw[key] !== "")) problems.push(key + " is on the Settings tab more than once. Keep one row for it.");
+  });
+  return problems;
 }
 
 function set_cellText(key, v, timeZone) {
   if (v == null) return "";
+  if (v === true) return "yes";     // a tick box, or TRUE typed into the cell
+  if (v === false) return "no";
   if (Object.prototype.toString.call(v) === "[object Date]") {
     if (isNaN(v.getTime())) return "";
     if (key !== "FREEZE_TIME") return v.toISOString();
@@ -75,10 +104,12 @@ function set_cellText(key, v, timeZone) {
 function set_normalize(raw, ctx) {
   raw = raw || {};
   ctx = ctx || {};
-  var errors = [], s = {};
+  var errors = set_nameProblems(raw), s = {};
   var yesNo = function (key, dflt) {
     var v = String(raw[key] || "").toLowerCase();
     if (!v) return dflt;
+    if (v === "true") v = "yes";
+    if (v === "false") v = "no";
     if (v === "yes" || v === "no") return v === "yes";
     errors.push(key + " must be yes or no (it says \"" + raw[key] + "\").");
     return dflt;
@@ -89,7 +120,7 @@ function set_normalize(raw, ctx) {
   else if (!/^\d+$/.test(id)) errors.push("SERVICE_TYPE_ID must be only digits (it says \"" + id + "\").");
   s.serviceTypeId = id;
 
-  var count = raw.PLAN_COUNT ? Number(raw.PLAN_COUNT) : SET_DEFAULT_PLAN_COUNT;
+  var count = raw.PLAN_COUNT ? (/^\d+$/.test(String(raw.PLAN_COUNT)) ? Number(raw.PLAN_COUNT) : NaN) : SET_DEFAULT_PLAN_COUNT;
   if (!(count >= 1 && count <= 10 && Math.floor(count) === count)) {
     errors.push("PLAN_COUNT must be a whole number from 1 to 10 (it says \"" + raw.PLAN_COUNT + "\").");
     count = SET_DEFAULT_PLAN_COUNT;

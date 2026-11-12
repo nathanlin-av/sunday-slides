@@ -48,7 +48,8 @@ test("refuses bad input loudly", () => {
   assert.throws(() => g.pw_build([{ label: "Verse 1", slides: [] }], lyr, { title: "x" }, ["V1"]), /has no slides/);
   assert.throws(() => g.pw_build([{ label: "Chorus", slides: [["HELLO"]] }, { label: "Chorus 1", slides: [["WORLD"]] }], lyr, { title: "x" }, ["C"]), /both be called/);
   assert.throws(() => g.pw_build([{ label: "Verse 1", slides: [["HELLO"]] }], lyr, { title: "x" }, ["Bridge"]), /has no group/);
-  assert.throws(() => g.pw_build([{ label: "Verse 1", slides: [["HELLO"]] }], lyr, { title: "x" }, ["Verse 1"]), /not a section label/);
+  assert.throws(() => g.pw_build([{ label: "Verse 1", slides: [["HELLO"]] }], lyr, { title: "x" }, ["Verse 1!"]), /not a section label/);
+  assert.strictEqual(g.pw_build([{ label: "Verse 1", slides: [["HELLO"]] }], lyr, { title: "x" }, ["Verse 1", "verse1", "V1"]).slides, 1);
 });
 
 test("slide text survives a write and read: RTF escaping of braces, backslash, accents and emoji", () => {
@@ -70,4 +71,23 @@ test("codec: re-encoding every golden file, and every slide's text path, is byte
     }
   }
   assert.ok(cues > 50, "only " + cues + " slides checked");
+});
+
+// Capitals that do not map back letter for letter (Turkish dotless i, ligatures).
+test("a line in capitals is found in the lyrics even when capitals change the letters", () => {
+  assert.strictEqual(g.pw_restoreCase("IŞIK IŞIK", "Işık ışık, yol", 0).text, "Işık ışık");
+  assert.strictEqual(g.pw_restoreCase("OFFICE HOURS", "the oﬃce hours.", 0).text, "oﬃce hours");
+  assert.strictEqual(g.pw_restoreCase("IŞIK", "ışık one\nışık two", 6).end, 13);
+  assert.throws(() => g.pw_restoreCase("IŞIK YOK", "ışık var", 0), /not found/);
+});
+
+test("a sequence item that is exactly a group's name always means that group", () => {
+  const by = { "FinalChorus": 1, "Final Chorus": 1, "Verse 1": 1, "Chorus": 1 };
+  assert.strictEqual(g.pw_sequenceName("FinalChorus", by), "FinalChorus");
+  assert.strictEqual(g.pw_sequenceName("Final Chorus", by), "Final Chorus");
+  assert.strictEqual(g.pw_sequenceName("final chorus", by), "FinalChorus");     // the first one typed
+  assert.strictEqual(g.pw_sequenceName("v1", by), "Verse 1");
+  assert.strictEqual(g.pw_sequenceName("c", by), "Chorus");
+  assert.strictEqual(g.pw_sequenceName("CHORUS1", by), "Chorus");
+  assert.throws(() => g.pw_sequenceName("Bridge", by), /has no group/);
 });

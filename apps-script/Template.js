@@ -84,6 +84,12 @@ function tpl_plainText(runText) {
   return pw_rtfUnescape(runText).replace(/\\'[0-9a-fA-F]{2}/g, "x").replace(/\\[A-Za-z]+-?\d* ?/g, "");
 }
 
+/** True when the words are typed in capitals, in any alphabet that has them (two letters or more). */
+function tpl_isAllCaps(text) {
+  var letters = String(text).replace(/[^\p{L}]/gu, "");
+  return Array.from(letters).length >= 2 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+}
+
 function tpl_double(fields, n) { var f = pb_first(fields, n); return f && f.body.length === 8 ? pb_readDouble(f.body) : null; }
 
 /** Locate the first slide with a text box. Returns { cue, textPath, count } or fails with a readable reason. */
@@ -93,6 +99,7 @@ function tpl_findSlide(top, P) {
   var N = TPL_N;
   for (var ci = 0; ci < cues.length; ci++) {
     var actions = pb_fields(cues[ci].body).filter(function (f) { return f.n === N.cueActions; });
+    var hit = null;
     for (var actionIdx = 0; actionIdx < actions.length; actionIdx++) {
       var slide = pb_first(pb_fields(actions[actionIdx].body), N.actionSlide);
       var pres = slide && pb_first(pb_fields(slide.body), N.slidePresentation);
@@ -106,11 +113,13 @@ function tpl_findSlide(top, P) {
       }
       if (textAt.length > 1) tpl_fail("The first slide with text has " + textAt.length + " text boxes. Use a slide with exactly one text box, or its words would repeat in every song.");
       if (textAt.length === 1) {
-        return { cue: cues[ci].body, slideNumber: ci + 1,
+        if (hit) tpl_fail("The first slide with text has more than one layer with words on it. Use a slide with exactly one text box, or the extra words would repeat in every song.");
+        hit = { cue: cues[ci].body, slideNumber: ci + 1,
           textPath: [[N.cueActions, actionIdx], N.actionSlide, N.slidePresentation, N.presentationBaseSlide, [N.baseSlideElements, textAt[0]], N.elementWrapper, N.elementText],
           elementPath: [[N.cueActions, actionIdx], N.actionSlide, N.slidePresentation, N.presentationBaseSlide, [N.baseSlideElements, textAt[0]], N.elementWrapper] };
       }
     }
+    if (hit) return hit;
   }
   tpl_fail("None of the slides in the file has a text box. Type some words on the slide before exporting it.");
 }
@@ -226,8 +235,7 @@ function tpl_read(input) {
   if (rtf.split(marker).length !== 2) tpl_fail("The text box's formatting repeats inside its text, which is not supported.");
   var runText = rtf.substring(start, Math.max(start, rtf.lastIndexOf("}")));
   var lines = tpl_plainText(runText).split("\n");
-  var letters = lines.join("").replace(/[^A-Za-zÀ-ɏ]/g, "");
-  var placeholderCaps = letters.length >= 2 && letters === letters.toUpperCase();
+  var placeholderCaps = tpl_isAllCaps(lines.join(""));
   var lay = tpl_readLayout(cue, found.textPath, found.elementPath, rtf, placeholderCaps);
   var assets = tpl_copy(PP_ASSETS);
   var cueIds = tpl_uuids(cue);
@@ -276,7 +284,7 @@ function tpl_choose(found, store, log) {
   var before = store ? store.get() : null;
   if (before !== state) {
     try { log(line); } catch (ignored) { /* the Log tab is not reachable; the choice still stands */ }
-    if (store) store.set(state);
+    if (store) { try { store.set(state); } catch (ignored) { /* the look still stands; the line is logged again next run */ } }
   }
   tpl.line = line;
   return tpl;

@@ -47,7 +47,8 @@ function ss_template(props, control) {
   catch (e) { found = { error: "Google Drive would not let the script look for it: " + e.message }; }
   return tpl_choose(found, {
     get: function () { return props.getProperty("TEMPLATE_STATE"); },
-    set: function (v) { props.setProperty("TEMPLATE_STATE", String(v).slice(0, 8000)); },
+    // A property holds 9 KB at most; 2,000 characters stay under that in any alphabet.
+    set: function (v) { props.setProperty("TEMPLATE_STATE", String(v).slice(0, 2000)); },
   }, control.log);
 }
 
@@ -59,7 +60,7 @@ function ss_env(props, loaded, overrides) {
     pco: { http: ss_http, auth: "Basic " + Utilities.base64Encode(app + ":" + secret), sleep: function (ms) { Utilities.sleep(ms); } },
     serviceTypeId: s.serviceTypeId, planCount: s.planCount, sched: s.sched, now: new Date(), clock: function () { return new Date(); },
     mode: overrides.forceDryRun ? "dry-run" : s.mode,
-    approvalRequired: s.approvalRequired, onlyPlanId: overrides.onlyPlanId || null,
+    approvalRequired: s.approvalRequired, onlyPlanId: overrides.onlyPlanId || null, forced: !!overrides.forceDryRun,
     state: {
       get: function (k) { var v = props.getProperty("ss:" + k); return v ? JSON.parse(v) : null; },
       set: function (k, v) { if (v == null) props.deleteProperty("ss:" + k); else props.setProperty("ss:" + k, JSON.stringify(v)); },
@@ -67,6 +68,19 @@ function ss_env(props, loaded, overrides) {
     control: loaded.control,
     template: ss_template(props, loaded.control),
   };
+}
+
+/**
+ * "A SongSelect import was tried today" stamps are only read on the day they are written. Remove older ones, so
+ * the script's small store (Script Properties) does not fill up over the years.
+ */
+function ss_pruneStamps(props, sched) {
+  try {
+    var all = props.getProperties(), today = JSON.stringify(job_dateKey(new Date(), job_sched(sched).timeZone));
+    Object.keys(all).forEach(function (key) {
+      if (key.indexOf("ss:imp:") === 0 && all[key] !== today) props.deleteProperty(key);
+    });
+  } catch (ignored) { /* tidying only: never stop a run for it */ }
 }
 
 function ss_run(overrides, loaded) {
@@ -80,8 +94,9 @@ function ss_run(overrides, loaded) {
     return { skipped: "another run is still going" };
   }
   try {
+    ss_pruneStamps(props, loaded.settings.sched);
     var summary = job_run(ss_env(props, loaded, overrides));
-    if (!overrides.onlyPlanId) props.setProperty("LAST_RUN", summary.at);
+    if (!overrides.onlyPlanId && !overrides.forceDryRun) props.setProperty("LAST_RUN", summary.at);
     return summary;
   } catch (e) {
     try { loaded.control.log("RUN FAILED: " + e.message); } catch (ignored) { /* sheet unavailable */ }
@@ -101,8 +116,8 @@ function runSundaySlides() {
   var s = loaded.settings;
   if (loaded.errors.length) {
     var problem = ss_problemText(loaded.errors);
-    if (props.getProperty("LAST_SETTINGS_PROBLEM") !== problem) {
-      props.setProperty("LAST_SETTINGS_PROBLEM", problem);
+    if (props.getProperty("LAST_SETTINGS_PROBLEM") !== problem.slice(0, 2000)) {
+      props.setProperty("LAST_SETTINGS_PROBLEM", problem.slice(0, 2000));   // a property holds 9 KB at most
       try { loaded.control.log(problem); } catch (ignored) { /* sheet unavailable */ }
     }
     ss_alertOnce(props, s.alertEmail, s.timeZone, "LAST_SETTINGS_ALERT", "Sunday Slides needs a setting fixed", problem + "\n\nControl sheet: " + ss_sheetUrl(props));
@@ -116,7 +131,7 @@ function runSundaySlides() {
     props.setProperty("LAST_ATTEMPT", new Date().toISOString());
     ss_alertOnce(props, s.alertEmail, s.timeZone, "LAST_FAIL_ALERT", "Sunday Slides could not run", "The weekly job failed: " + e.message +
       "\n\nIt will try again about once an hour, and every 15 minutes from the evening before the freeze until the freeze time. " +
-      "Nothing was changed in Planning Center by the failed run.");
+      "If the run had already attached slides to a song before it failed, those stay in Planning Center and the next run counts them.");
     throw e;
   }
   props.deleteProperty("LAST_ATTEMPT");

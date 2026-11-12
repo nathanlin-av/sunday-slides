@@ -1,6 +1,6 @@
 // Checks of the lyrics-to-slides drafter: the width model, the rules, and a regression score against reference slide
-// drafts of four public-domain hymns (tests/fixtures/golden/*.slides.txt, which are the drafter's reviewed output).
-// If a tuning change moves a line break, the score test shows which slide changed; review it, then regenerate the file.
+// drafts of four public-domain hymns (tests/fixtures/golden/*.slides.txt, which are the drafter's output, checked by hand).
+// If a tuning change moves a line break, the score test shows which slide changed; check it, then regenerate the file.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -37,7 +37,7 @@ const FONT_WIDTHS = {
   "I’M FIXED UPON IT": 646.854
 };
 
-// The reference drafts are the drafter's own reviewed output, so every slide must match exactly. A drop means a line break moved.
+// The reference drafts are the drafter's own output, checked by hand, so every slide must match exactly. A drop means a line break moved.
 const TOTAL_SLIDES = 74;
 
 function parseDraft(file) {
@@ -168,11 +168,11 @@ test("a line too long for two lines becomes more slides and is flagged", () => {
 });
 
 test("identical repeated section is dropped, different text is renamed and flagged", () => {
-  const same = g.draftSlides("Chorus\nOh how He loves\n\nVerse 1\nOh come let us adore\n\nChorus\noh how he loves!");
+  const same = g.draftSlides("Chorus\nOh come and sing\n\nVerse 1\nOh come let us adore\n\nChorus\noh come and sing!");
   assert.deepEqual(same.groups.map((x) => x.label), ["Chorus", "Verse 1"]);
   assert.equal(same.flags.length, 0);
 
-  const diff = g.draftSlides("Chorus\nOh how He loves\n\nChorus\nA different chorus line");
+  const diff = g.draftSlides("Chorus\nOh come and sing\n\nChorus\nA different chorus line");
   assert.deepEqual(diff.groups.map((x) => x.label), ["Chorus", "Chorus 2"]);
   assert.equal(diff.flags.length, 1);
   assert.match(diff.flags[0], /Chorus 2/);
@@ -184,7 +184,7 @@ test("identical repeated section is dropped, different text is renamed and flagg
 test("lyrics with no labels go in one group called Verse 1 with a flag", () => {
   const out = g.draftSlides("Amazing grace\nHow sweet the sound");
   assert.deepEqual(out.groups.map((x) => x.label), ["Verse 1"]);
-  assert.equal(out.groups[0].slides.length, 2);
+  assert.equal(out.groups[0].slides.length, 1);
   assert.equal(out.flags.length, 1);
   assert.match(out.flags[0], /No section labels/);
 });
@@ -220,7 +220,7 @@ test("score against the reference hymn drafts", () => {
   }
   rows.push(`OVERALL          ${ok}/${total} ${(100 * ok / total).toFixed(1)}%`);
 
-  console.log(rows.join("\n"));
+  if (ok !== total) console.log(rows.join("\n"));
 
   assert.equal(total, TOTAL_SLIDES);
   assert.equal(ok, total, `${total - ok} slide(s) no longer match the reference drafts, see the rows above`);
@@ -231,4 +231,150 @@ test("Amazing Grace lyrics file: label order, counts and no flags", () => {
   assert.deepEqual(out.groups.map((x) => x.label), ["Verse 1", "Verse 2", "Verse 3", "Verse 4"]);
   assert.deepEqual(out.groups.map((x) => x.slides.length), [4, 4, 4, 4]);
   assert.deepEqual(out.flags, []);
+});
+
+// Short consecutive lines share a slide, but never across sections, never after a sentence end,
+// and a line that needs two slide lines keeps its own slide. Public-domain text only.
+test("two short consecutive lines share one slide", () => {
+  const out = g.draftSlides("Chorus\nGlory be to the Father\nAnd to the Son\nAnd to the Holy Ghost");
+  assert.deepEqual(out.groups[0].slides[0], ["GLORY BE TO THE FATHER", "AND TO THE SON"]);
+});
+
+test("a short line is never paired with a line from the next section", () => {
+  const out = g.draftSlides("Verse 1\nHoly holy holy\nChorus\nLord God Almighty");
+  assert.deepEqual(out.groups.map((x) => x.slides.length), [1, 1]);
+});
+
+test("a sentence end keeps the next line on a new slide", () => {
+  const out = g.draftSlides("Verse 1\nHoly holy holy.\nLord God Almighty");
+  assert.equal(out.groups[0].slides.length, 2);
+});
+
+test("a sentence end inside closing quotes or brackets also keeps the next line apart", () => {
+  for (const end of ['me."', "me.\u201d", "me?'", "me.)"]) {
+    const out = g.draftSlides("Verse 1\nHe said to " + end + "\nCome and see");
+    assert.strictEqual(out.groups[0].slides.length, 2, end);
+  }
+});
+
+test("a long line is not paired", () => {
+  const out = g.draftSlides("Verse 1\nHoly holy holy\nEarly in the morning our song shall rise to Thee");
+  assert.equal(out.groups[0].slides.length, 2);
+});
+
+test("three short lines make one shared slide and one slide of its own", () => {
+  const out = g.draftSlides("Chorus\nGlory be to the Father\nAnd to the Son\nAnd to the Holy Ghost");
+  assert.deepEqual(out.groups[0].slides.map((s) => s.length), [2, 1]);
+});
+
+test("short lines with a repeated phrase keep a slide each", () => {
+  const out = g.draftSlides("Verse 1\nPraise Him praise Him\nPraise Him praise Him");
+  assert.equal(out.groups[0].slides.length, 2);
+});
+
+// Labels, other alphabets and wide characters.
+test("the same label a third time with words already seen makes no extra group", () => {
+  const a = "Amazing grace how sweet the sound", b = "I once was lost but now am found";
+  const out = g.draftSlides(["Chorus", a, "", "Chorus", b, "", "Chorus", b, "", "Chorus", a].join("\n"));
+  assert.deepEqual(out.groups.map((x) => x.label), ["Chorus", "Chorus 2"]);
+});
+
+test("Chorus and Chorus 1 are the same label", () => {
+  const a = "Amazing grace how sweet the sound", b = "I once was lost but now am found";
+  const same = g.draftSlides(["Chorus", a, "", "Chorus 1", a].join("\n"));
+  assert.deepEqual(same.groups.map((x) => x.label), ["Chorus"]);
+  const differ = g.draftSlides(["Chorus", a, "", "Chorus 1", b].join("\n"));
+  assert.deepEqual(differ.groups.map((x) => x.label), ["Chorus", "Chorus 2"]);
+  assert.equal(differ.flags.length, 1);
+});
+
+test("two sections with one label and different words in another alphabet are both kept", () => {
+  const out = g.draftSlides("Verse\nСвят свят свят\n\nVerse\nВоистину воскрес");
+  assert.equal(out.groups.length, 2);
+  assert.equal(out.flags.length, 1);
+});
+
+test("wide characters (Chinese, Japanese, Korean) are measured at full width", () => {
+  const line = "聖".repeat(26);
+  assert.equal(g.slideLineFits(line), false);
+  assert.equal(g.slideLineFits("聖".repeat(6)), true);
+});
+
+test("words in another alphabet are not mistaken for a repeated phrase", () => {
+  const out = g.draftSlides("Verse 1\n\u6211 \u7231 \u4f60 \u4e3b");
+  assert.deepEqual(out.groups[0].slides, [["\u6211 \u7231 \u4f60 \u4e3b"]]);
+});
+
+
+test("a label like Verse 1a is a label", () => {
+  const out = g.draftSlides("VERSE 1A\nAmazing grace how sweet the sound\n\nVerse 1b\nI once was lost but now am found");
+  assert.deepEqual(out.groups.map((x) => x.label), ["Verse 1a", "Verse 1b"]);
+});
+
+test("one-word lines share a slide too", () => {
+  const out = g.draftSlides("Verse 1\nHoly\nHoly\nLord God Almighty");
+  assert.deepEqual(out.groups[0].slides.map((x) => x.length), [2, 1]);
+});
+
+test("rare Chinese characters outside the basic range are full width as well", () => {
+  assert.equal(g.slideLineFits("\ud840\udc0b".repeat(26)), false);
+  assert.equal(g.slideLineFits("\ud840\udc0b".repeat(6)), true);
+});
+
+test("a label keeps only its words: stars, dashes and a final full stop are not part of it", () => {
+  const body = "\nAmazing grace how sweet the sound\n\n";
+  const out = g.draftSlides("Verse 1." + body + "*Chorus*" + body.replace("Amazing", "Lasting") + "-- Bridge --" + body.replace("Amazing", "Saving") + "**Tag**:" + body.replace("Amazing", "Endless"));
+  assert.deepEqual(out.groups.map((x) => x.label), ["Verse 1", "Chorus", "Bridge", "Tag"]);
+});
+
+test("unseen characters and unusual line breaks do not make slides", () => {
+  const out = g.draftSlides("\u200bVerse 1\nAmazing grace how sweet the sound\u2028That saved a wretch like me\n\u200b\n\ufeffI once was lost but now am found\u0007");
+  assert.deepEqual(out.groups.map((x) => x.label), ["Verse 1"]);
+  assert.equal(out.groups[0].slides.length, 3);
+  assert.ok(!/[\u200b\ufeff\u0007\u2028]/.test(JSON.stringify(out.groups)));
+});
+
+test("a huge line is cut into pieces, flagged, and does not take long", () => {
+  const t0 = Date.now();
+  const words = g.draftSlides("Verse 1\n" + "holy ".repeat(3000));
+  const commas = g.draftSlides("Verse 1\nword word " + ",".repeat(20000) + "a");
+  assert.ok(Date.now() - t0 < 5000, "took " + (Date.now() - t0) + " ms");
+  assert.ok(words.groups[0].slides.length > 100);
+  assert.ok(words.flags.some((f) => /cut into pieces/.test(f)));
+  assert.ok(commas.groups[0].slides.length >= 1);
+  const normal = g.draftSlides("Verse 1\nAmazing grace how sweet the sound that saved a wretch like me");
+  assert.ok(!normal.flags.some((f) => /cut into pieces/.test(f)));
+});
+
+test("a label with nothing under it, for a section already typed, means sing that section again", () => {
+  const out = g.draftSlides("Verse 1\nAmazing grace how sweet the sound\n\nChorus\nI once was lost but now am found\n\nVerse 2\nTwas grace that taught my heart to fear\n\nChorus\n");
+  assert.deepEqual(out.order, ["Verse 1", "Chorus", "Verse 2", "Chorus"]);
+  assert.equal(out.flags.length, 0);
+  const lone = g.draftSlides("Verse 1\nAmazing grace how sweet the sound\n\nBridge\n");
+  assert.deepEqual(lone.order, ["Verse 1"]);
+  assert.equal(lone.flags.length, 1);
+});
+
+test("vowel points and tone marks in any script take no width of their own", () => {
+  const em = (text) => gas.layout_em(CMG, text);   // width of the letters alone, without letter spacing
+  assert.equal(em("\u05e9\u05c1\u05b8\u05dc\u05d5\u05b9\u05dd"), em("\u05e9\u05dc\u05d5\u05dd"));
+  assert.equal(em("\u0e01\u0e48"), em("\u0e01"));
+  assert.ok(em("\u05e9") > 0);
+});
+
+test("a variation selector past the basic range takes no width", () => {
+  const em = (text) => gas.layout_em(CMG, text);
+  assert.equal(em("A\udb40\udd00"), em("A"));
+});
+
+test("trimming the ends of a line gives exactly what the plain pattern gives, on any text", () => {
+  const pattern = /^[\p{Cf}\s]+|[\p{Cf}\s]+$/gu;
+  const parts = ["a", "b", " ", "\t", "\u00a0", "\u200b", "\u200d", "\u200f", "\u2060", "\ufeff", "\u061c", "\u00ad", "\ud83d\ude00", "\udb40\udc20", "\udb40\udc7f", "\ud834\udd73", "\ud800", "\udc00", "."];
+  let seed = 7;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  for (let i = 0; i < 20000; i++) {
+    let s = "";
+    for (let k = rnd(9); k > 0; k--) s += parts[rnd(parts.length)];
+    assert.equal(gas.drafter_trimEdges(s), s.replace(pattern, ""), JSON.stringify(s));
+  }
 });

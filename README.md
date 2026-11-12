@@ -17,7 +17,8 @@ for a Sunday.
 - **A CCLI license and SongSelect**, if you want lyrics to arrive on their own. Planning Center can import lyrics from
   SongSelect for songs that have a CCLI number. Without them, paste lyrics into Planning Center by hand.
 
-Sunday Slides never contains song lyrics. Each church brings its own, under its own CCLI license.
+Sunday Slides comes with no copyrighted lyrics (its tests and self-test use public-domain hymns). Each church brings
+its own, under its own CCLI license.
 
 ## Setting it up (about 20 minutes)
 
@@ -49,8 +50,8 @@ Choose one way.
 1. In the editor, pick **setupSundaySlides** in the function list at the top and click **Run**.
 2. Google asks you to review permissions. Click **Review permissions**, choose your account, and approve. Google may say
    the app is not verified. That is expected for your own script: click **Advanced**, then **Go to Sunday Slides
-   (unsafe)**. The script asks for access to Drive and Sheets (to make its control sheet), to send you email, to talk
-   to Planning Center, and to run on a timer.
+   (unsafe)**. The script asks for access to all of your Google Drive and Sheets (it uses this to make its control
+   sheet and to read the Sunday Slides folder), to send you email, to talk to Planning Center, and to run on a timer.
 3. Setup makes a Google Sheet called **Sunday Slides Control** in a Drive folder called **Sunday Slides**, and a timer
    that wakes the script every 15 minutes. The result is written to the log at the bottom of the editor, with a link to
    the sheet.
@@ -86,14 +87,21 @@ Open the control sheet and go to the **Settings** tab. One row per setting. Leav
 A value the script cannot understand (for example `MODE` set to `lvie`) is reported on the Log tab and by email, and
 the script refuses to run. A typo can never switch on live mode.
 
-Fill in **SERVICE_TYPE_ID** and **TIME_ZONE** (the job will not run without them). Leave **MODE** on `dry-run` for now.
+The same goes for a setting name it does not know (a typo such as `PAUSE` for `PAUSED`) and for a name that is on
+two rows. A row it does not know with nothing in the Value column is ignored, so a note to yourself in the first
+column is fine. Leave the column headings in row 1 of every tab where they are. If one is moved or renamed the script
+stops and tells you.
+
+Fill in **SERVICE_TYPE_ID** and **TIME_ZONE**. The job will not run without SERVICE_TYPE_ID, and it needs TIME_ZONE
+unless you have already set the script project's own time zone to yours. Leave **MODE** on `dry-run` for now.
 
 The Value column is plain text, so `08:00` stays `08:00`. If you type `8:45` it is understood too.
 
 ### 6. Optional: use your own look
 
-Skip this and your slides use the built-in look: white Arial Bold text, centered, on black. To use your church's look
-instead, see "Your own look" below. You can do it now or later.
+Skip this and your slides use the built-in look: white Arial Bold text, centered, on black. The suggested look is
+CMG Sans (see "Suggested: the CMG Sans look" below). To use your church's own look instead, see "Your own look" below.
+You can do it now or later.
 
 ### 7. Check it
 
@@ -102,14 +110,17 @@ instead, see "Your own look" below. You can do it now or later.
 2. Run **runSundaySlidesNow**. This does a real pass over your next plans. Because MODE is `dry-run`, nothing changes in
    Planning Center.
 3. Open the control sheet:
-   - **This Sunday** lists each song in the next plan and what, if anything, needs doing.
+   - **This Sunday** lists each song in the first plan that falls on your FREEZE_DAY (the next plan, if none does)
+     and what, if anything, needs doing.
    - **Approvals** has one row per song that would get slides, with a preview of every slide.
    - **Log** has one line per run, and a line whenever the template changes.
 4. When the drafts look right (leave it a week if you like), change **MODE** to `live`. Then, on the Approvals tab,
    set the Status of each row you are happy with to **APPROVED**. The next run attaches that song's ProPresenter file.
+   Runs happen about every 4 hours during the day, and every 15 minutes from 17:00 on the day before FREEZE_DAY until
+   the freeze. To attach right away, run **runSundaySlidesNow**.
 
 Songs with no lyrics need a one-time **Import from SongSelect (Lyrics)** on the arrangement in Planning Center. In live
-mode the script asks for this itself, at most once a day per song, and never after the freeze time.
+mode the script asks for this itself, at most once a day per arrangement, and never after the freeze time.
 
 ## Every Sunday: what your volunteers do in ProPresenter
 
@@ -172,8 +183,9 @@ If `template.pro` is missing, the built-in look is used and the Log tab says so.
 used (damaged, wrong kind of file, two text boxes), the built-in look is used, the Log tab explains the reason in plain
 words, and the weekly email mentions it.
 
-**How lines are broken.** Each sung line becomes one slide, split into two short lines at the natural breath. To do
-that it has to guess how wide the text will be:
+**How lines are broken.** Each sung line is split into two short lines at the natural breath. Two very short lines in
+a row share one slide instead (never across sections, and never after a line that ends a sentence). To do that it has
+to guess how wide the text will be:
 
 - Arial and Arial Bold (the built-in look): exact widths, read from the Arial font files by `tools/build_arial_widths.js`.
 - CMG Sans: exact widths of CMG Sans Medium Caps, if your template uses that font.
@@ -183,19 +195,46 @@ that it has to guess how wide the text will be:
 If the text looks too tight or too loose in your look, shorten or lengthen the box in the template, or edit the slide in
 ProPresenter. Generated slides can always be edited by hand.
 
-### Optional: the CMG Sans look
+### Suggested: the CMG Sans look
 
-Many churches use the CMG Sans font from Church Motion Graphics. It is not included here. It is a paid or separately
-licensed font that you download yourself from the Church Motion Graphics font page,
-<https://www.churchmotiongraphics.com/>. Install it on every computer that runs ProPresenter, make your template with
-it, and the script will use CMG Sans widths for the line breaks. Nothing here depends on it.
+If you do not have a look of your own yet, CMG Sans is a good one to start with. It is the lyric font from Church
+Motion Graphics. The font is theirs and is not included here: get it from their site,
+<https://www.churchmotiongraphics.com/>, under their terms. Install it on every computer that runs ProPresenter, make
+your template with it (see "Your own look" above), and the script will use CMG Sans widths for the line breaks.
+Without it, everything still works with the built-in look.
+
+## How to type lyrics
+
+The script reads the lyrics on each song arrangement in Planning Center. A few habits make the drafts come out right.
+
+Start each section with a label on its own line, in English: Verse 1, Chorus, Pre-Chorus, Bridge, Tag, Refrain, Intro,
+Outro, Ending, Interlude, Vamp, Turnaround, Instrumental. `[Chorus]`, `(Chorus)`, `CHORUS`, `Chorus:` and `Chorus x2`
+are all read as Chorus. A number alone on the first line of a verse (`1`, `2.`) is read as Verse 1, Verse 2. A label
+with nothing under it, for a section you typed earlier, means "sing that section again".
+
+Short forms and other languages are not read as labels (`V1`, `C`, `Coro`, `Strophe`). If it finds no label it can
+read, everything goes into one group called Verse 1 and the draft says so in its notes.
+
+Put one sung line on each line. If a whole verse sits on one line, it is cut into pieces and the draft says so.
+
+Some things are left off the slides on purpose:
+
+- anything in round, square or curly brackets: ad-libs, echoes, notes, and a whole line if all of it is in brackets
+- repeat marks such as `x2` or `Repeat Chorus`
+- license and copyright lines such as `CCLI Song #`, `©` or `Words and Music by`
+
+Lines of chords are not removed, so paste the lyrics and not a chord chart.
+
+The slides follow the arrangement's order in Planning Center, for every part of it that matches a label in the
+lyrics. If there is no order, or none of it matches, they follow the order you typed the sections in, repeats
+included.
 
 ## How approval and dry run work
 
 - **dry-run** (the starting mode) reads Planning Center, drafts slides and fills in the sheet. It never writes to
   Planning Center.
 - **live** attaches ProPresenter files to the song arrangements, and only for songs you have approved (or all songs if
-  you set APPROVAL_REQUIRED to `no`).
+  you set APPROVAL_REQUIRED to `no`; a draft you set to REJECTED stays rejected either way).
 - The **Approvals** tab shows what each draft looks like. Set Status to **APPROVED** to allow it or **REJECTED** to
   stop it. If the lyrics change in Planning Center, or you change `template.pro`, the draft changes and needs a fresh
   approval. Keys on the Approvals tab start with the letter `a` so Sheets cannot turn them into numbers.
@@ -207,8 +246,9 @@ it, and the script will use CMG Sans widths for the line breaks. Nothing here de
 
 - It never deletes or replaces a file that is already attached to a song. If a song already has a ProPresenter file,
   it is left alone, even if the lyrics change later (you get a note, nothing more).
-- It never shares or stores lyrics outside your own Planning Center and Google account.
-- It talks only to Planning Center and Google. No other server, no tracking, no accounts.
+- It never shares or stores lyrics outside your own Planning Center and Google account. The one place words can
+  travel is the email to ALERT_EMAIL: a note about a problem line may quote that line.
+- It talks only to Planning Center and Google. There is no other server, and it does no tracking.
 - It never changes anything in Planning Center unless MODE is `live`.
 
 ## Staying safe
@@ -218,8 +258,14 @@ it, and the script will use CMG Sans widths for the line breaks. Nothing here de
 - There is nothing to install. It has no outside packages or libraries; the copy and paste setup uses only Google's
   own script editor.
 - You can check where it is allowed to connect. Open `appsscript.json`: the `urlFetchWhitelist` lists only the two
-  Planning Center addresses. Google enforces that list, so the script cannot send anything anywhere else. If you
-  ever see another address there, stop and do not run it.
+  Planning Center addresses. Google checks every request against that list, and the script checks the address itself
+  as well. If you ever see another address there, stop and do not run it.
+- Email goes through Google to the ALERT_EMAIL address. If that is blank or not a real address, or the settings cannot
+  be read, it goes to the account that owns the script.
+- Be careful who can edit three things. The script project: anyone who can edit it can read the Planning Center token
+  in Script Properties. The control sheet: an editor can change MODE, APPROVAL_REQUIRED, SERVICE_TYPE_ID and
+  ALERT_EMAIL, and approve drafts. The Sunday Slides folder in Drive: an editor can swap `template.pro`, which changes
+  the look of every new song.
 - If you use clasp, install Google's official package (`@google/clasp`) and nothing with a similar name.
 - Found a security problem? Please report it privately with the **Report a vulnerability** button under this
   project's **Security** tab instead of opening a public issue.
@@ -230,11 +276,15 @@ it, and the script will use CMG Sans widths for the line breaks. Nothing here de
 | --- | --- |
 | Nothing happens | Check SERVICE_TYPE_ID is filled in, PAUSED is `no`, and the Log tab. Settings problems appear there and by email. |
 | "TIME_ZONE is empty" or "wrong capitals" | Type your time zone on the Settings tab exactly as `America/Chicago` (capitals and underscore matter). |
-| A run failed | The email and the Log tab say why. It tries again about once an hour, and every 15 minutes from the evening before the freeze until the freeze time. |
+| A run failed | The email (unless ALERT_EMAIL is `none`) and the Log tab say why. It tries again about once an hour, and every 15 minutes from the evening before the freeze until the freeze time. |
 | "The Planning Center key is not set" | Add `PCO_APP_ID` and `PCO_SECRET` in Project Settings, Script Properties. |
-| A song says "needs lyrics" | Import lyrics from SongSelect on the arrangement in Planning Center, or paste them in. |
-| A song says "removed by user" | The script attached a file before and someone removed it. It will not add it again. Make that one by hand, or see "A run was cut off" below to let it try again. |
-| A song says "attach-unconfirmed" | An earlier run may have been cut off while attaching. The script checks again, and if Planning Center still shows no file after 30 minutes it tries again by itself. |
+| A song says `needs-lyrics` | Import lyrics from SongSelect on the arrangement in Planning Center, or paste them in. |
+| A song says `removed-by-user` | The script attached a file before and someone removed it. It will not add it again. Make that one by hand, or see "A run was cut off" below to let it try again. |
+| A song says `attach-unconfirmed` | An earlier run may have been cut off while attaching. The script checks again, and if Planning Center still shows no file after 30 minutes it tries again by itself. |
+| A song says `not-reached` | The run ran out of time before that song (Google stops a run after a few minutes). The next run starts with it. |
+| A song says `too-long` | The song has more slides than one cell of the Approvals tab can show. Split it into shorter arrangements, or make those slides by hand. |
+| All the lyrics are in one group called Verse 1 | The section labels were not read as labels. See "How to type lyrics" above. |
+| "The columns of the ... tab were moved or renamed" | Put the headings in row 1 back as the message lists them, or delete that tab and it is made again. |
 | Slides use the wrong look | Read the **TEMPLATE** lines on the Log tab. They say which file was used and why a file was refused. |
 | ProPresenter says "File already exists" | Choose New Version. |
 | Lines are too wide or break oddly | Check the font and box width in your template, or edit the slide in ProPresenter. |
@@ -266,7 +316,7 @@ This is an early version. Here is what has and has not been checked:
 
 - The tests (below) compare the file writer byte for byte with reference files from a separate writer, for the
   built-in look and for several different templates.
-- So far only the person who wrote it has used it. Start in `dry-run` and keep your usual way of making slides as a
+- Only the author has used it so far. Start in `dry-run` and keep your usual way of making slides as a
   backup for the first few weeks.
 - Generated files have not been checked in ProPresenter on Windows.
 

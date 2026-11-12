@@ -8,13 +8,14 @@ var CTL_FOLDER = "Sunday Slides";
 var CTL_SETTINGS_HEAD = ["Setting", "Value", "What it does"];
 var CTL_APPROVAL_HEAD = ["Key", "Song", "Status", "Slides", "Preview", "Notes", "Order", "Updated"];
 var CTL_SUNDAY_HEAD = ["Plan", "Song", "Status", "What to do"];
+var CTL_LOG_HEAD = ["At", "Summary"];
 var CTL_STATUSES = ["PENDING", "APPROVED", "REJECTED", "ATTACHED"];
 var CTL_HELP = [
   ["How Sunday Slides works"],
   ["Every week it reads the next plans in Planning Center and makes ProPresenter slides for songs that have none."],
-  ["New slides wait here: open Approvals, read the Preview, and set Status to APPROVED (or REJECTED). The next run attaches them."],
+  ["New slides wait here: open Approvals, read the Preview, and set Status to APPROVED (or REJECTED). The next run attaches them (about every 4 hours, more often the evening before; or run runSundaySlidesNow)."],
   ["It never replaces or deletes slides that are already attached, and it changes nothing after the freeze time set on the Settings tab."],
-  ["This Sunday lists every song in the next plan and what, if anything, needs doing."],
+  ["This Sunday lists every song in the first plan on your freeze day (the next plan, if none falls on it) and what, if anything, needs doing."],
   ["Songs with no lyrics need a one-time 'Import from SongSelect' (Lyrics) on the arrangement in Planning Center."],
   ["Your own look: export one ProPresenter slide as template.pro and put it in the Sunday Slides folder in your Drive (the one setup made, even if you have moved this sheet). The Log tab says whether it was used, and why not if it was refused."],
 ];
@@ -109,9 +110,24 @@ function ctl_settingsTab(ss) {
   return sh;
 }
 
+/**
+ * The script reads and writes each tab by column position, so the headings in row 1 must be where it put them.
+ * If someone moved or renamed a column, stop and say so; never read or write the wrong column.
+ */
+function ctl_checkHead(sh, head, name) {
+  var row = sh.getRange(1, 1, 1, head.length).getValues()[0];
+  for (var i = 0; i < head.length; i++) {
+    if (String(row[i] == null ? "" : row[i]).trim().toLowerCase() !== head[i].toLowerCase()) {
+      throw new Error("The columns of the " + name + " tab were moved or renamed. Row 1 must read, from column A: " + head.join(", ") +
+        ". Put them back, or delete the tab and it will be made again.");
+    }
+  }
+}
+
 /** The raw settings as typed: { NAME: "value" }. */
 function ctl_readSettings(ss) {
   var sh = ctl_settingsTab(ss), n = sh.getLastRow() - 1;
+  ctl_checkHead(sh, CTL_SETTINGS_HEAD, "Settings");
   return set_parseRows(n > 0 ? sh.getRange(2, 1, n, 2).getValues() : [], ss.getSpreadsheetTimeZone());
 }
 
@@ -135,6 +151,7 @@ function ctl_prepare(ss) {
 /** The control object job_run expects. */
 function ctl_control(ss) {
   var ap = ctl_tab(ss, "Approvals", CTL_APPROVAL_HEAD);
+  ctl_checkHead(ap, CTL_APPROVAL_HEAD, "Approvals");
   function rows() {
     var n = ap.getLastRow() - 1;
     return n > 0 ? ap.getRange(2, 1, n, CTL_APPROVAL_HEAD.length).getValues() : [];
@@ -154,12 +171,14 @@ function ctl_control(ss) {
     },
     setThisSunday: function (report) {
       var sh = ctl_tab(ss, "This Sunday", CTL_SUNDAY_HEAD);
+      ctl_checkHead(sh, CTL_SUNDAY_HEAD, "This Sunday");
       if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, CTL_SUNDAY_HEAD.length).clearContent();
       var values = report.map(function (r) { return [ctl_cell(r.plan), ctl_cell(r.title), r.status, ctl_cell(r.note)]; });
       if (values.length) sh.getRange(2, 1, values.length, CTL_SUNDAY_HEAD.length).setValues(values);
     },
     log: function (text) {
-      var sh = ctl_tab(ss, "Log", ["At", "Summary"]);
+      var sh = ctl_tab(ss, "Log", CTL_LOG_HEAD);
+      ctl_checkHead(sh, CTL_LOG_HEAD, "Log");
       sh.appendRow([new Date().toISOString(), ctl_cell(text)]);
       if (sh.getLastRow() > 2000) sh.deleteRows(2, sh.getLastRow() - 2000);
     },
